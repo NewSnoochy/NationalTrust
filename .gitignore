@@ -1,0 +1,4 @@
+# Generated place data. It is served only to signed-in users (Supabase RLS),
+# so it is deliberately never published in this public repo.
+build/
+__pycache__/
