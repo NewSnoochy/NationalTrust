@@ -137,7 +137,9 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: 
   font: inherit; font-size: .88rem; width: 100%; min-height: 64px; resize: vertical;
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
 }
-.pop .status { font-size: .78rem; color: var(--muted); min-height: 1em; text-align: right; }
+.pop .foot { display: flex; gap: 8px; align-items: baseline; }
+.pop .changed { font-size: .78rem; color: var(--muted); }
+.pop .status { font-size: .78rem; color: var(--muted); min-height: 1em; text-align: right; margin-left: auto; }
 .pop .status.err { color: var(--todo); }
 
 .leaflet-control-locate a { font-size: 18px; line-height: 30px; }

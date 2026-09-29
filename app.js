@@ -14,6 +14,12 @@ const CATS = {
   church:   { label: "Abbey & church", glyph: '<path d="M12 2v5"/><path d="M9.5 4h5"/><path d="M5 22V12l7-5 7 5v10z"/><path d="M10 22v-4a2 2 0 0 1 4 0v4"/>' },
   other:    { label: "Museum & other", glyph: '<path d="M5 22V3"/><path d="M5 4h13l-3 4.5 3 4.5H5"/>' },
 };
+// The National Trust's members get in free at National Trust for Scotland
+// places and vice versa, so both are on the map.
+const ORGS = {
+  nt:  { label: "National Trust", short: "National Trust" },
+  nts: { label: "National Trust for Scotland", short: "NT for Scotland" },
+};
 const COL = { todo: "#b2472f", done: "#2e7d3a", gold: "#e3b341" };
 const STROKE = 'fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"';
 const PIN = "M16 1C8.3 1 2 7.1 2 14.6 2 24.5 16 41 16 41s14-16.5 14-26.4C30 7.1 23.7 1 16 1z";
@@ -121,7 +127,7 @@ let map, cluster, user;
 const places = [];                  // rows from public.places
 const byId = new Map();             // id -> place
 const markers = new Map();          // id -> L.Marker
-const visits = new Map();           // id -> { visited, rating, notes }
+const visits = new Map();           // id -> { visited, rating, notes, by, at } - shared by all users
 let filtersDirty = false;
 
 const isVisited = (id) => !!visits.get(id)?.visited;
@@ -136,6 +142,24 @@ async function fetchAll(table, cols) {
   }
 }
 
+const visitFromRow = (v) => ({ visited: v.visited, rating: v.rating, notes: v.notes || "", by: v.updated_by, at: v.updated_at });
+
+// When the other person ticks, rates or writes a note, their change arrives
+// here and the pin (and the card, if it is open and not being typed in) updates.
+function listenForChanges() {
+  sb.channel("shared-visits")
+    .on("postgres_changes", { event: "*", schema: "public", table: "shared_visits" }, ({ new: row }) => {
+      if (!row?.place_id || !byId.has(row.place_id)) return;
+      if (row.updated_by === user.email && visits.has(row.place_id)) return;   // our own save coming back
+      const was = isVisited(row.place_id);
+      visits.set(row.place_id, visitFromRow(row));
+      if (was !== isVisited(row.place_id)) refreshMarker(row.place_id);
+      const pop = markers.get(row.place_id).getPopup();
+      if (pop?.isOpen() && !pop.getElement()?.contains(document.activeElement)) pop.update();
+    })
+    .subscribe();
+}
+
 async function start(u) {
   if (started) return;
   started = true;
@@ -145,14 +169,22 @@ async function start(u) {
   $("who").textContent = u.email;
   initMap();
   try {
-    const [pl, vs] = await Promise.all([fetchAll("places", "*"), fetchAll("visits", "place_id,visited,rating,notes")]);
-    for (const p of pl) { if (!CATS[p.cat]) p.cat = "other"; places.push(p); byId.set(p.id, p); }
-    for (const v of vs) visits.set(v.place_id, { visited: v.visited, rating: v.rating, notes: v.notes || "" });
+    const [pl, vs] = await Promise.all([
+      fetchAll("places", "*"),
+      fetchAll("shared_visits", "place_id,visited,rating,notes,updated_by,updated_at"),
+    ]);
+    for (const p of pl) {
+      if (!CATS[p.cat]) p.cat = "other";
+      if (!ORGS[p.org]) p.org = "nt";
+      places.push(p); byId.set(p.id, p);
+    }
+    for (const v of vs) visits.set(v.place_id, visitFromRow(v));
     $("loading").hidden = true;
-    if (!places.length) { $("loading").hidden = false; $("loading").textContent = "No places yet - run build/seed_places.sql in Supabase."; }
+    if (!places.length) { $("loading").hidden = false; $("loading").textContent = "No places yet - run the Update places action on GitHub."; }
     buildMarkers();
     buildFilters();
     applyFilters();
+    listenForChanges();
   } catch (err) {
     $("loading").textContent = "Could not load places: " + (err.message || err);
   }
@@ -172,7 +204,7 @@ function initMap() {
   map.on("baselayerchange", (e) => store.set("layer", e.name));
 
   const view = store.get("view", null);
-  if (view) map.setView(view.c, view.z); else map.fitBounds([[49.9, -8.2], [55.8, 1.8]]);
+  if (view) map.setView(view.c, view.z); else map.fitBounds([[49.9, -8.2], [59.5, 1.8]]);
   map.on("moveend", () => store.set("view", { c: map.getCenter(), z: map.getZoom() }));
 
   // "Where am I?" button
@@ -233,8 +265,8 @@ function popup(p) {
   const status = h("div", { class: "status", "aria-live": "polite" });
 
   const links = h("div", { class: "links" },
-    (p.links || []).filter((l) => safeUrl(l.url)).map((l) =>
-      h("a", { href: l.url, target: "_blank", rel: "noopener", class: l.label.startsWith("National Trust") ? "nt" : null }, l.label)),
+    (p.links || []).filter((l) => safeUrl(l.url)).map((l, i) =>          // the Trust's own page is always first
+      h("a", { href: l.url, target: "_blank", rel: "noopener", class: i === 0 ? "nt" : null }, l.label)),
     h("a", { href: `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}`, target: "_blank", rel: "noopener" }, "Directions"));
 
   const walks = (p.walks || []).filter((w) => safeUrl(w.url));
@@ -265,7 +297,7 @@ function popup(p) {
   }
   paintRating(v.rating);
 
-  const notes = h("textarea", { placeholder: "Your notes: who you went with, what to see next time…", rows: 3 });
+  const notes = h("textarea", { placeholder: "Notes (you both see these): who went, what to see next time…", rows: 3 });
   notes.value = v.notes || "";
   let timer;
   const flush = () => { clearTimeout(timer); if (notes.value !== (visits.get(p.id)?.notes || "")) save(p.id, { notes: notes.value }, status); };
@@ -273,34 +305,40 @@ function popup(p) {
   notes.addEventListener("blur", flush);
   markers.get(p.id).once("popupclose", flush);
 
+  const changed = v.by
+    ? h("div", { class: "changed" }, `Last changed by ${v.by === user.email ? "you" : v.by.split("@")[0]}` +
+        (v.at ? ", " + new Date(v.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : ""))
+    : null;
+
   return h("div", { class: "pop" },
-    h("div", { class: "type" }, glyphBadge(p.cat), CATS[p.cat].label),
+    h("div", { class: "type" }, glyphBadge(p.cat), CATS[p.cat].label + (p.org === "nts" ? " · " + ORGS.nts.short : "")),
     h("h3", {}, p.name),
     h("p", {}, p.descr || ""),
     links,
     walkList,
     h("div", { class: "mine" },
       h("label", { class: "visited" }, tick, "Visited"),
-      h("div", {}, h("div", { class: "rating-label" }, h("span", {}, "My rating"), h("span", {}, "0 = poor · 10 = superb")),
+      h("div", {}, h("div", { class: "rating-label" }, h("span", {}, "Our rating"), h("span", {}, "0 = poor · 10 = superb")),
         h("div", { class: "rating", role: "group", "aria-label": "Rating 0 to 10" }, buttons)),
       notes,
-      status));
+      h("div", { class: "foot" }, changed, status)));
 }
 
 // Saves go out one at a time per place and always send the latest state, so a
 // slow early request can never land after, and undo, a later one.
 const queues = new Map();
 function save(id, patch, statusEl) {
-  const cur = { ...(visits.get(id) || { visited: false, rating: null, notes: "" }), ...patch };
+  const cur = { ...(visits.get(id) || { visited: false, rating: null, notes: "" }), ...patch,
+                by: user.email, at: new Date().toISOString() };
   const was = isVisited(id);
   visits.set(id, cur);
   if (was !== cur.visited) refreshMarker(id);
   say(statusEl, "Saving…");
   const q = (queues.get(id) || Promise.resolve()).then(async () => {
     const s = visits.get(id);
-    const { error } = await sb.from("visits").upsert({
-      user_id: user.id, place_id: id, visited: s.visited, rating: s.rating, notes: s.notes,
-      updated_at: new Date().toISOString(),
+    const { error } = await sb.from("shared_visits").upsert({
+      place_id: id, visited: s.visited, rating: s.rating, notes: s.notes,
+      updated_at: s.at, updated_by: user.email,
     });
     say(statusEl, error ? "Not saved: " + error.message : "Saved ✓", !!error);
   });
@@ -308,9 +346,14 @@ function save(id, patch, statusEl) {
 }
 
 // ---------------------------------------------------------------- filters
-let filter = store.get("filter", { vis: "all", cats: Object.keys(CATS) });
+let filter = { vis: "all", cats: Object.keys(CATS), orgs: Object.keys(ORGS), ...store.get("filter", {}) };
 
 function buildFilters() {
+  $("orgs").replaceChildren(...Object.entries(ORGS).map(([key, o]) => {
+    const box = h("input", { type: "checkbox", value: key, checked: filter.orgs.includes(key) });
+    box.addEventListener("change", readFilters);
+    return h("li", {}, h("label", {}, box, o.label, h("span", { class: "count", id: "count-org-" + key })));
+  }));
   const ul = $("cats");
   ul.replaceChildren(...Object.entries(CATS).map(([key, c]) => {
     const box = h("input", { type: "checkbox", value: key, checked: filter.cats.includes(key) });
@@ -337,13 +380,14 @@ function readFilters() {
   filter = {
     vis: document.querySelector('input[name="vis"]:checked').value,
     cats: [...$("cats").querySelectorAll("input:checked")].map((b) => b.value),
+    orgs: [...$("orgs").querySelectorAll("input:checked")].map((b) => b.value),
   };
   store.set("filter", filter);
   applyFilters();
 }
 
 function passes(p) {
-  if (!filter.cats.includes(p.cat)) return false;
+  if (!filter.cats.includes(p.cat) || !filter.orgs.includes(p.org)) return false;
   if (filter.vis === "todo") return !isVisited(p.id);
   if (filter.vis === "done") return isVisited(p.id);
   return true;
@@ -358,12 +402,12 @@ function applyFilters() {
 function updateCounts() {
   const done = places.filter((p) => isVisited(p.id)).length;
   $("progress").textContent = `${done} / ${places.length}`;
-  for (const key of Object.keys(CATS)) {
-    const el = $("count-" + key);
-    if (!el) continue;
-    const of = places.filter((p) => p.cat === key);
-    el.textContent = `${of.filter((p) => isVisited(p.id)).length} / ${of.length}`;
-  }
+  const count = (id, of) => {
+    const el = $(id);
+    if (el) el.textContent = `${of.filter((p) => isVisited(p.id)).length} / ${of.length}`;
+  };
+  for (const key of Object.keys(CATS)) count("count-" + key, places.filter((p) => p.cat === key));
+  for (const key of Object.keys(ORGS)) count("count-org-" + key, places.filter((p) => p.org === key));
 }
 
 // ----------------------------------------------------------------- search
@@ -402,7 +446,7 @@ function goTo(p) {
   $("search").value = "";
   $("search").blur();
   if (!passes(p)) {                     // make sure the chosen place is on the map
-    filter = { vis: "all", cats: [...new Set([...filter.cats, p.cat])] };
+    filter = { vis: "all", cats: [...new Set([...filter.cats, p.cat])], orgs: [...new Set([...filter.orgs, p.org])] };
     store.set("filter", filter);
     buildFilters();
     applyFilters();
