@@ -681,12 +681,12 @@ def summaries_for(titles):
     for i, tt in enumerate(todo):
         u = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(tt.replace(" ", "_"), safe="")
         try:
-            out[tt] = http_json(u, tries=2).get("extract", "")
+            out[tt] = http_json(u, tries=4).get("extract", "")     # 4 tries: Wikipedia rate-limits (429) bursts
         except Exception:  # noqa: BLE001 - a missing page just has no summary
             out[tt] = ""
         if i and i % 100 == 0:
             print(f"   {i}/{len(todo)}")
-        time.sleep(0.05)
+        time.sleep(0.2)
     with open(spath, "w", encoding="utf-8") as f:
         json.dump(out, f)
     return out
