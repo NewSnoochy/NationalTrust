@@ -100,6 +100,7 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: 
 /* ---------- markers */
 .pin { background: none; border: 0; }
 .pin svg { display: block; filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.45)); }
+.pin.owned svg { opacity: .55; }
 .cluster {
   width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
   background: conic-gradient(var(--done) calc(var(--p) * 1%), var(--todo) 0);
@@ -115,6 +116,7 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: 
 .pop h3 { margin: 4px 0 4px; font-size: 1.05rem; line-height: 1.25; }
 .pop .type { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
 .pop p { margin: 0 0 8px; }
+.pop .owned-note { font-size: .82rem; color: var(--muted); border-left: 3px solid var(--line); padding-left: 8px; }
 .pop .links { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
 .pop .links a {
   font-size: .8rem; text-decoration: none; color: var(--green); border: 1px solid var(--line);

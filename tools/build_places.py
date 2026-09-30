@@ -8,6 +8,11 @@ Sources (all open data, fetched fresh unless cached in build/cache/):
   * OpenStreetMap via Overpass - named features with the Trust as operator,
     and the NT's own walking routes, whose website tags point at the NT page
     for each place (/visit/<region>/<place>/<walk>). ODbL.
+  * Each Trust's sitemap - the list of place pages it publishes for search
+    engines. A place counts as a Trust place ("listed") only if it has a
+    page there or a source links it to one; the rest are land or buildings
+    the Trust merely owns. Sitemap pages no source covers become new places,
+    located by OpenStreetMap's geocoder (Nominatim).
 
 Neither Trust's website is scraped; both are only linked to.
 
@@ -41,7 +46,18 @@ ORGS = [
         "domain": "nationaltrust.org.uk",
         "page_rx": r"https?://(?:www\.)?nationaltrust\.org\.uk/visit/([a-z0-9-]+)/([a-z0-9-]+)",
         "page_fmt": "https://www.nationaltrust.org.uk/visit/{0}/{1}",
-        "search": "https://www.nationaltrust.org.uk/search?query=",
+        # The NT's sitemap of its place pages. It is not complete (Stourhead is
+        # missing), so a place also counts if a source links it to an NT page.
+        "sitemap": "https://www.nationaltrust.org.uk/sitemap.xml", "sitemap_part": "/sitemap-place/", "sitemap_min": 500,
+        # Places no link or name ties to their Trust page: id -> sitemap slug,
+        # or the page's address if the sitemap lacks it.
+        "pages": {"Q1812832": "hadrians-wall-and-housesteads-fort", "Q6745232": "kinder-edale-and-the-high-peak",
+                  "osm-r14386805": "wasdale", "osm-w4580532": "buttermere-valley", "Q733428": "steam-yacht-gondola",
+                  "Q5685275": "claife-viewing-station-and-windermere-west-shore",
+                  "Q7775833": "the-workhouse-and-infirmary", "osm-w180995329": "kinder-edale-and-the-high-peak",
+                  "Q5176083": "https://www.nationaltrust.org.uk/visit/warwickshire/coughton-court"},
+        # Sitemap pages the geocoder puts at a namesake: slug -> (lat, lon).
+        "page_coords": {"market-hall": (52.0513, -1.7807), "grange-barn": (51.8634, 0.6903)},
         "not_places": {"Q333515", "Q18160511"},          # the Trust itself; Heelis, its head office
         # Trust places no source above lists: Wikipedia title -> (lat, lon), or
         # None to take the article's own coordinates.
@@ -58,7 +74,9 @@ ORGS = [
         "domain": "nts.org.uk",
         "page_rx": r"https?://(?:www\.)?nts\.org\.uk/visit/places/([a-z0-9-]+)",
         "page_fmt": "https://www.nts.org.uk/visit/places/{0}",
-        "search": "https://www.nts.org.uk/search?query=",
+        "sitemap": "https://www.nts.org.uk/sitemaps-1-sitemap.xml", "sitemap_part": "-section-places-", "sitemap_min": 60,
+        "pages": {"Q5000064": "robert-burns-birthplace-museum", "osm-w1067973864": "bachelors-club"},
+        "page_coords": {"burg": (56.3960, -6.1350)},
         "not_places": {"Q599997"},
         "extra_titles": {"Grey Mare's Tail, Moffat Hills": None, "Pass of Killiecrankie": None,
                          "Priorwood Garden": (55.5990, -2.7196), "Balmacara": (57.2830, -5.6390)},
@@ -329,6 +347,143 @@ def org_page(org, url):
     return (org["page_fmt"].format(*m.groups()), *m.groups()) if m else None
 
 
+# ------------------------------------------------ the Trusts' own place lists
+def http_text(url, tries=4):
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                text = r.read().decode("utf-8", "replace")
+            if "<urlset" not in text and "<sitemapindex" not in text:
+                raise ValueError("not a sitemap (a bot check page?)")
+            return text
+        except Exception as e:  # noqa: BLE001 - network flakiness, retry
+            if i == tries - 1:
+                raise
+            print("  retry", url[:80], e)
+            time.sleep(10 * (i + 1))
+
+
+def fetch_sitemap(org):
+    """Every place page the Trust's sitemap lists. A failure stops the whole
+    build: without the list, nothing can be told apart from a Trust place."""
+    try:
+        index = http_text(org["sitemap"])
+        parts = [u for u in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", index) if org["sitemap_part"] in u]
+        pages = set()
+        for u in parts:
+            for loc in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", http_text(u)):
+                m = re.fullmatch(org["page_rx"] + "/?", loc)
+                if m:
+                    pages.add(org["page_fmt"].format(*m.groups()))
+            time.sleep(1)
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(f"Could not read the {org['name']} sitemap ({e}); nothing was changed.")
+    if len(pages) < org["sitemap_min"]:
+        raise SystemExit(f"The {org['name']} sitemap lists only {len(pages)} places; nothing was changed.")
+    return sorted(pages)
+
+
+def page_slug(url):
+    return url.rstrip("/").rsplit("/", 1)[-1]
+
+
+def page_region(url):
+    parts = url.rstrip("/").split("/")
+    return parts[-2] if parts[-3] == "visit" and parts[-2] != "places" else None   # NT /visit/<region>/<place>; NTS has none
+
+
+# Top-level NT paths that are never a place (a holiday cottage, an article).
+NOT_PLACE_PATHS = {"holidays", "discover", "search", "shop", "who-we-are", "get-in-touch", "services", "features",
+                   "support-us", "join-us", "donate", "our-policies", "members-area", "cy", "events", "visit", "main"}
+# The NT's per-region lists (/visit/cornwall/coast-beaches): not places either.
+REGION_LISTS = {"coast-beaches", "christmas", "dog-friendly", "family-friendly", "gardens-parks", "houses-buildings",
+                "outdoor-entertainment", "outdoor-activities", "places-to-eat", "volunteering", "walking",
+                "countryside-woodland", "history-heritage"}
+
+
+def trust_page(org, url, by_slug):
+    """The Trust's page for a place, from a link to it, or None.
+
+    A current link is used as it is (or as the sitemap spells it). An old NT
+    link (/stourhead, /kingston-lacy/features/badbury-rings) becomes the
+    sitemap page it names; if the sitemap lacks it, the old link is kept,
+    since the NT redirects those. Old NTS links go to the NTS home page, so
+    they count only when the sitemap has their place.
+    """
+    url = (url or "").strip()
+    hit = org_page(org, url)
+    if hit:                              # an NTS page the sitemap lacks is a dead one
+        return by_slug.get(hit[-1]) or (hit[0] if org["key"] == "nt" and hit[-1] not in REGION_LISTS else None)
+    m = re.match(r"https?://(?:www\.)?" + re.escape(org["domain"]) + r"/+([^?#]*)", url, re.I)
+    if not m:
+        return None
+    segs = [s.lower() for s in m.group(1).split("/") if s]
+    if not segs or (segs[0] in NOT_PLACE_PATHS and segs[0] != "visit"):
+        return None
+    for s in dict.fromkeys([segs[-1], segs[0]]):
+        for v in (s, "the-" + s, s.removeprefix("the-")):
+            if v in by_slug:
+                return by_slug[v]
+    if org["key"] == "nt" and segs[0] not in NOT_PLACE_PATHS and re.fullmatch(r"[a-z0-9-]+", segs[0]):
+        return "https://www.nationaltrust.org.uk/" + segs[0]
+    return None
+
+
+def name_tokens(s):
+    """Words of a name or page slug, apostrophes and plurals folded away, so
+    "Guildhall of St George" and st-georges-guildhall agree."""
+    return {re.sub(r"(?<=[a-z]{3})s$", "", w) for w in tokens(re.sub(r"['’]", "", s).replace("-", " "))}
+
+
+MATCH_GENERIC = GENERIC | {"nature", "reserve", "nnr", "sssi", "country", "the", "chase", "down", "head", "point", "bay",
+                           "beach", "cove", "valley", "moor", "farm", "mill", "cottage", "woodland", "coast", "village",
+                           "island", "cliff", "barn", "bridge", "tower", "market", "sand", "commons"}
+
+
+def same_name(a, b):
+    """True if two names differ only in generic words ("Chapel Porth" and
+    "Porth" do not; "Crickley Hill Country Park" and "Crickley Hill" do)."""
+    ta, tb = name_tokens(a) - MATCH_GENERIC, name_tokens(b) - MATCH_GENERIC
+    return bool(ta) and ta == tb if (ta or tb) else name_tokens(a) == name_tokens(b)
+
+
+def page_by_name(name, by_slug, near=None):
+    """The one sitemap page whose name holds every distinctive word of this
+    place's name ("Crickley Hill Country Park" -> crickley-hill), fewest extra
+    words first. near(url) can rule out pages in the wrong region. A tie is
+    no match: guessing would put a wrong page on the card."""
+    want = name_tokens(name) - MATCH_GENERIC
+    if not want:
+        return None
+    scored = sorted((len(name_tokens(s) - name_tokens(name)), u) for s, u in by_slug.items()
+                    if want <= name_tokens(s) and (near is None or near(u)))
+    if not scored or (len(scored) > 1 and scored[0][0] == scored[1][0]):
+        return None
+    return scored[0][1]
+
+
+def nominatim(query, box, trust, trust_only=False):
+    """Where OpenStreetMap's geocoder puts a place name, searching only within
+    box (s, w, n, e) and preferring a result the Trust runs or owns; None if
+    nowhere. At most one request a second, as its usage policy asks."""
+    s, w, n, e = box
+    u = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
+        {"q": query, "format": "jsonv2", "limit": 5, "countrycodes": "gb", "extratags": 1,
+         "viewbox": f"{w},{n},{e},{s}", "bounded": 1})
+    time.sleep(1.1)
+    try:
+        r = http_json(u, tries=2)
+    except Exception:  # noqa: BLE001 - no location just means no pin
+        return None
+    r = [x for x in r or [] if x.get("category") not in ("highway", "amenity", "shop", "office", "railway", "craft")]
+    if not r:
+        return None
+    tags = lambda x: " ".join((x.get("extratags") or {}).get(k, "") for k in ("operator", "owner")).lower()  # noqa: E731
+    best = next((x for x in r if trust.lower() in tags(x)), None if trust_only else r[0])
+    return (float(best["lat"]), float(best["lon"])) if best else None
+
+
 # ------------------------------------------------------------------- build
 BAD_WD_TYPES = ("organization", "organisation", "business", "wikimedia", "charit", "civil parish",
                 "human settlement", "village")
@@ -368,6 +523,9 @@ def build_org(org, existing):
     print("OpenStreetMap…")
     osm = cached(f"{k}_osm.json", lambda: fetch_osm(org))["elements"]
     print(" ", len(osm), "features")
+    print("Sitemap…")
+    sitemap = cached(f"{k}_sitemap.json", lambda: fetch_sitemap(org))
+    print(" ", len(sitemap), "place pages")
     print("Wikipedia categories…")
     wpc = cached(f"{k}_wp_categories.json", lambda: fetch_wp_categories(org["wp_roots"], org["wp_sub"]))
     extras = [t for t in org["extra_titles"] if t not in wpc]
@@ -644,6 +802,7 @@ def build_org(org, existing):
         if known and top["id"] not in existing:
             top["id"] = known[0]
         top["also"] = []
+        top["urls"] = [u for m in members for u in [m.get("page")] + (m.get("website") or "").split(";") if u]
         for m in members[1:]:
             top["page"] = top.get("page") or m.get("page")
             top["website"] = top.get("website") or m.get("website")
@@ -656,17 +815,143 @@ def build_org(org, existing):
     print(f"  merged {len(places)} candidates into {len(merged_places)} places")
     places = merged_places
 
-    # ---- The Trust's page from a website link where it points at the Trust
-    for p in places:
-        if not p.get("page") and p.get("website"):
-            for u in p["website"].split(";"):
-                if org["domain"] in u:
-                    hit = org_page(org, u)
-                    p["page"] = hit[0] if hit else u.strip()
-                    break
+    places = link_trust_pages(org, places, sitemap, osm)
     for p in places:
         p["org"] = org
     return places
+
+
+def link_trust_pages(org, places, sitemap, osm):
+    """Give each place its page on the Trust's website, and mark the places
+    that have none: those are only owned by the Trust (a let cottage, a patch
+    of woodland), not places it opens to visitors. Sitemap pages no place
+    claims become new places, located by OpenStreetMap."""
+    by_slug = {page_slug(u): u for u in sitemap}
+    listed = set(sitemap)
+    by_id = {p["id"]: p for p in places}
+    for p in places:
+        p["page"] = None
+        if p["id"] in org["pages"]:
+            v = org["pages"][p["id"]]
+            p["page"] = v if v.startswith("http") else by_slug[v]
+            continue
+        for u in p.get("urls", []):
+            p["page"] = trust_page(org, u, by_slug)
+            if p["page"]:
+                break
+
+    # Where each region's places are, from the pins linked above, so a name
+    # match cannot give a Surrey hill a Devon page.
+    # A region with only a few linked pins has no trustworthy outline yet.
+    pins = {}
+    for p in places:
+        r = p["page"] and page_region(p["page"])
+        if r:
+            pins.setdefault(r, []).append((p["lat"], p["lon"]))
+    boxes = {r: (min(a for a, _ in v) - 0.4, min(o for _, o in v) - 0.6, max(a for a, _ in v) + 0.4, max(o for _, o in v) + 0.6)
+             for r, v in pins.items() if len(v) >= 8}
+
+    def region_box(url):
+        return boxes.get(page_region(url), org["bbox"])
+
+    by_name = 0
+    for p in places:
+        if not p["page"]:
+            p["page"] = page_by_name(p["name"], by_slug, lambda u, p=p: in_bbox(region_box(u), p["lat"], p["lon"]))
+            by_name += bool(p["page"])
+    print(f"  Trust pages: {sum(bool(p['page']) for p in places)} of {len(places)} places ({by_name} by name)")
+
+    # Sitemap pages no place has. A place with no page, or only an old link
+    # the sitemap does not spell that way, takes the page if their names
+    # agree ("formby" -> Formby Red Squirrel Reserve, "felbrigg-hall-gardens-
+    # and-estate" -> Felbrigg Hall); otherwise the page becomes a new pin.
+    claimed = {p["page"] for p in places if p["page"]}
+    osm_named = [(e["tags"]["name"], e.get("center") or e) for e in osm
+                 if "name" in e.get("tags", {}) and ("lat" in e or "center" in e)]
+    added, attached, lost = [], 0, []
+    for url in sitemap:
+        if url in claimed:
+            continue
+        slug = page_slug(url)
+        st = name_tokens(slug)
+        want = st - MATCH_GENERIC
+        box = region_box(url)
+
+        def fits(p):
+            pt = name_tokens(p["name"])
+            if not want:                 # "the-chase": only a place called just that
+                return pt == st
+            return want <= pt or bool(pt - MATCH_GENERIC) and (pt - MATCH_GENERIC) <= st
+        cands = sorted((len(name_tokens(p["name"]) ^ st), p["id"]) for p in places
+                       if p["page"] not in listed and in_bbox(box, p["lat"], p["lon"]) and fits(p))
+        if cands and (len(cands) == 1 or cands[0][0] < cands[1][0]
+                      or haversine(*[(by_id[c[1]]["lat"], by_id[c[1]]["lon"]) for c in cands[:2]]) < 2):
+            by_id[cands[0][1]]["page"] = url
+            attached += 1
+            continue
+        name = title_from_slug(slug)
+
+        def osm_fits(n):                 # "Needles Old Battery" for the-needles-old-battery-and-new-battery
+            nt = name_tokens(n) - MATCH_GENERIC
+            return same_name(n, name) or (len(nt) >= 2 and nt <= st)
+        pos = org["page_coords"].get(slug) or next(((c["lat"], c["lon"]) for n, c in osm_named
+                                                    if osm_fits(n) and in_bbox(box, c["lat"], c["lon"])), None) \
+            or locate(org, name, url, box)
+        if not pos:
+            lost.append(url)
+            continue
+        near = min(places, key=lambda p: haversine(pos, (p["lat"], p["lon"])))
+        d = haversine(pos, (near["lat"], near["lon"]))
+        if d < 1.5 and near["page"] not in listed and name_tokens(near["name"]) & want:
+            near["page"] = url           # the place it names, which had an old link or none
+            attached += 1
+            continue
+        if d < 0.35:
+            continue                     # part of a place already on the map
+        pid = f"{org['key']}-{slug}"
+        p = {"id": pid, "name": name, "lat": pos[0], "lon": pos[1], "cat": cat_from_name(name) or "nature",
+             "wd_desc": "", "wiki": None, "qid": None, "website": None, "osm_desc": None, "src": "sitemap",
+             "page": url, "region": title_from_slug(page_region(url) or "") or None, "walks": []}
+        places.append(p)
+        by_id[pid] = p
+        added.append(name)
+    print(f"  sitemap pages with no place: {attached} matched to one, {len(added)} new places, {len(lost)} not located")
+    for u in lost:
+        print("    not located:", u)
+
+    for p in places:
+        p["listed"] = bool(p["page"])
+    print(f"  {sum(p['listed'] for p in places)} Trust places, {sum(not p['listed'] for p in places)} only owned by it")
+    return places
+
+
+# The counties each NT web region covers, to steer the geocoder.
+REGION_AREAS = {"lake-district": ["Cumbria"], "north-east": ["Northumberland", "County Durham", "Tyne and Wear"],
+                "peak-district-derbyshire": ["Derbyshire", "Staffordshire"], "bath-bristol": ["Bath", "Bristol"],
+                "birmingham-west-midlands": ["West Midlands"], "cheshire-greater-manchester": ["Cheshire", "Greater Manchester"],
+                "gloucestershire-cotswolds": ["Gloucestershire"], "liverpool-lancashire": ["Merseyside", "Lancashire"],
+                "isle-of-wight": ["Isle of Wight"], "northern-ireland": ["Northern Ireland"], "london": ["London"]}
+
+
+def locate(org, name, url, box):
+    """A new pin's position from the geocoder: the name within the region's
+    counties first, preferring a feature the Trust runs."""
+    region = page_region(url)
+    if region:
+        areas = REGION_AREAS.get(region) or [title_from_slug(w) for w in region.split("-") if w not in SMALL]
+    else:
+        areas = ["Scotland"]
+    for q in [f"{name}, {a}" for a in areas]:
+        pos = nominatim(q, box, org["name"])
+        if pos:
+            return pos
+    short = name.split(" and ")[0]              # "Marloes Sands and Mere" -> "Marloes Sands"
+    if short != name:                           # half a name is a guess: only a feature the Trust runs will do
+        for a in areas:
+            pos = nominatim(f"{short}, {a}", box, org["name"], trust_only=True)
+            if pos:
+                return pos
+    return None
 
 
 def summaries_for(titles):
@@ -705,12 +990,11 @@ def to_row(p, summaries):
     if not desc and p.get("wd_desc"):
         desc = p["wd_desc"][:1].upper() + p["wd_desc"][1:] + "."
     if not desc:
-        desc = f"{CAT_WORD[p['cat']]} cared for by the {org['name']}" + (f" in the {p['region']} area." if p.get("region") else ".")
+        what = "cared for" if p["listed"] else "owned"
+        desc = f"{CAT_WORD[p['cat']]} {what} by the {org['name']}" + (f" in the {p['region']} area." if p.get("region") else ".")
     links = []
-    if p.get("page"):
+    if p["listed"]:                      # the Trust's own page is always first
         links.append({"label": org["short"], "url": p["page"]})
-    else:
-        links.append({"label": org["short"] + " (search)", "url": org["search"] + urllib.parse.quote(p["name"])})
     if p.get("website") and org["domain"] not in p["website"]:
         links.append({"label": "Website", "url": p["website"].split(";")[0].strip()})
     if p.get("wiki"):
@@ -721,7 +1005,7 @@ def to_row(p, summaries):
         links.append({"label": "Wikidata", "url": "https://www.wikidata.org/wiki/" + p["qid"]})
     walks = sorted({w["url"]: w for w in p.get("walks", [])}.values(), key=lambda w: w["name"])
     return {"id": p["id"], "org": org["key"], "name": p["name"], "lat": round(p["lat"], 5), "lon": round(p["lon"], 5),
-            "cat": p["cat"], "descr": desc, "links": links, "walks": walks}
+            "cat": p["cat"], "descr": desc, "links": links, "walks": walks, "listed": p["listed"]}
 
 
 def main():
@@ -744,20 +1028,20 @@ def main():
     def sq(s):
         return "'" + str(s).replace("'", "''") + "'"
     lines = ["-- Generated by tools/build_places.py - safe to re-run: it upserts, never deletes,",
-             "-- so nobody's visits, ratings or notes are touched.",
+             "-- so nobody's visits, ratings or notes are touched. Trust places only.",
              "-- Data: Wikidata (CC0), OpenStreetMap contributors (ODbL), Wikipedia (CC BY-SA).",
-             "insert into public.places (id, org, name, lat, lon, cat, descr, links, walks) values"]
+             "insert into public.places (id, org, name, lat, lon, cat, descr, links, walks, listed) values"]
     vals = [f"({sq(r['id'])},{sq(r['org'])},{sq(r['name'])},{r['lat']},{r['lon']},{sq(r['cat'])},{sq(r['descr'])},"
-            f"{sq(json.dumps(r['links'], ensure_ascii=False))}::jsonb,{sq(json.dumps(r['walks'], ensure_ascii=False))}::jsonb)"
-            for r in rows]
+            f"{sq(json.dumps(r['links'], ensure_ascii=False))}::jsonb,{sq(json.dumps(r['walks'], ensure_ascii=False))}::jsonb,true)"
+            for r in rows if r["listed"]]
     lines.append(",\n".join(vals))
     lines.append("on conflict (id) do update set org=excluded.org, name=excluded.name, lat=excluded.lat, lon=excluded.lon,"
-                 " cat=excluded.cat, descr=excluded.descr, links=excluded.links, walks=excluded.walks;")
+                 " cat=excluded.cat, descr=excluded.descr, links=excluded.links, walks=excluded.walks, listed=excluded.listed;")
     with open(os.path.join(BUILD, "seed_places.sql"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
     print(f"\n{len(rows)} places written.", dict(Counter(r["org"] for r in rows)), dict(Counter(r["cat"] for r in rows)))
-    print("with the Trust's own page:", sum(not l["label"].endswith("(search)") for r in rows for l in r["links"][:1]),
+    print("Trust places:", sum(r["listed"] for r in rows), " only owned by a Trust:", sum(not r["listed"] for r in rows),
           " with walks:", sum(bool(r["walks"]) for r in rows))
 
 

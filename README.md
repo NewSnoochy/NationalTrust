@@ -6,7 +6,7 @@ in free at each other's properties. It's for keeping track of where you've been.
 
 **Live site:** https://newsnoochy.github.io/NationalTrust/ (sign-in required)
 
-- About 830 places. Each pin's **colour** shows whether you've been: brick red
+- About 670 places. Each pin's **colour** shows whether you've been: brick red
   means not yet, and green with a gold tick means visited. The **white glyph**
   shows what kind of place it is (house, castle, garden, countryside, coast,
   ancient site, mill/industry, abbey/church, museum/other).
@@ -65,6 +65,9 @@ update needs to write places, lives only in the repo's Actions secrets.
 A project set up before sharing and Scotland were added needs one run of
 [`supabase/migrate_shared_and_scotland.sql`](supabase/migrate_shared_and_scotland.sql).
 It merges everyone's existing ticks, ratings and notes into the shared table.
+One set up before places were checked against the Trusts' websites needs one
+run of [`supabase/migrate_listed.sql`](supabase/migrate_listed.sql) before its
+next update.
 
 ## How the place list is updated
 
@@ -77,8 +80,14 @@ It merges everyone's existing ticks, ratings and notes into the shared table.
   published places are never merged into one;
 - refuses to change anything if either Trust's list would shrink by more than
   10%, since that means a source was down, not that places closed;
-- removes places the sources no longer list, but only if nobody has a tick,
-  rating or note on them.
+- keeps only the Trusts' **places to visit**: ones with a page on the
+  Trust's website. Wikidata and OpenStreetMap also list everything a Trust
+  merely owns (let cottages, farms, patches of woodland, a hotel), and those
+  are removed;
+- removes places the sources no longer list;
+- never removes a place that has a tick, rating or note. If it isn't a Trust
+  place to visit, it stays on the map with a faded pin and a note on its card
+  saying so.
 
 Each run adds a line of counts to `UPDATES.log`. This also stops GitHub from
 switching off the schedule, which it does after 60 days without a commit. To
@@ -91,8 +100,18 @@ python tools/build_places.py --refresh   # re-download everything
 python tools/check_coverage.py           # spot-check well-known places
 ```
 
-The sources are all open data, and neither Trust's website is scraped, only
-linked to:
+Whether a place is a Trust place to visit comes from each Trust's **sitemap**,
+the list of place pages it publishes for search engines. The National Trust's
+is incomplete (Stourhead isn't in it), so a place also counts if Wikidata,
+OpenStreetMap or an NT walk links it to an NT page. Sitemap pages that no
+source covers become new pins, located with OpenStreetMap's geocoder
+(Nominatim). The few that can't be matched automatically are listed by hand in
+`pages` and `page_coords` in `ORGS` in `build_places.py`. If a sitemap can't be
+read (the NT site sometimes shows bots a check page), the update stops and
+changes nothing.
+
+The other sources are all open data, and neither Trust's website is scraped,
+only linked to:
 [Wikidata](https://www.wikidata.org) items owned or run by each Trust (CC0),
 the Wikipedia "National Trust properties in …" and "National Trust for
 Scotland properties" categories (CC BY-SA), and

@@ -1,6 +1,7 @@
 -- National Trust map: database schema for a NEW Supabase project. Run once in
 -- Supabase > SQL Editor. Safe to re-run. (A project set up before shared
--- visits and Scotland were added needs migrate_shared_and_scotland.sql instead.)
+-- visits and Scotland were added needs migrate_shared_and_scotland.sql instead;
+-- one set up before the 'listed' column needs migrate_listed.sql.)
 
 -- The place list. Readable only by signed-in users, so the map shows nothing
 -- to anyone who is not logged in. Nobody can write it from the browser; it is
@@ -15,8 +16,10 @@ create table if not exists public.places (
   cat    text not null,
   descr  text,
   links  jsonb not null default '[]',
-  walks  jsonb not null default '[]'
-);
+  walks  jsonb not null default '[]',
+  listed boolean                              -- true = a Trust place to visit; false = only owned by a
+);                                            -- Trust, kept because someone has notes on it
+alter table public.places add column if not exists listed boolean;
 alter table public.places enable row level security;
 drop policy if exists "signed-in users read places" on public.places;
 create policy "signed-in users read places" on public.places

@@ -45,15 +45,16 @@ function glyphBadge(cat) {
 }
 
 const iconCache = new Map();
-function pinIcon(cat, visited) {
-  const key = cat + ":" + visited;
+// A place the Trust only owns (kept for its notes) gets a faded pin.
+function pinIcon(cat, visited, listed = true) {
+  const key = cat + ":" + visited + ":" + listed;
   if (!iconCache.has(key)) {
     const tick = visited
       ? `<circle cx="26" cy="6.5" r="5.5" fill="${COL.gold}" stroke="white" stroke-width="1.5"/>` +
         `<path d="M23.4 6.6l1.8 1.8 3.3-3.5" fill="none" stroke="#1d2320" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`
       : "";
     iconCache.set(key, L.divIcon({
-      className: "pin",
+      className: listed ? "pin" : "pin owned",
       html: `<svg width="32" height="42" viewBox="0 0 32 42"><path d="${PIN}" fill="${visited ? COL.done : COL.todo}" stroke="white" stroke-width="1.5"/>` +
             `<g transform="translate(7 5.6) scale(.75)" ${STROKE}>${CATS[cat].glyph}</g>${tick}</svg>`,
       iconSize: [32, 42], iconAnchor: [16, 41], popupAnchor: [0, -36],
@@ -231,7 +232,7 @@ function initMap() {
       const ms = c.getAllChildMarkers();
       const done = ms.filter((m) => isVisited(m.options.placeId)).length;
       return L.divIcon({
-        className: "pin", iconSize: [40, 40],
+        className: listed ? "pin" : "pin owned", iconSize: [40, 40],
         html: `<div class="cluster" style="--p:${Math.round((100 * done) / ms.length)}" title="${done} of ${ms.length} visited"><span>${ms.length}</span></div>`,
       });
     },
@@ -243,7 +244,7 @@ function initMap() {
 
 function buildMarkers() {
   for (const p of places) {
-    const m = L.marker([p.lat, p.lon], { icon: pinIcon(p.cat, isVisited(p.id)), title: p.name, placeId: p.id });
+    const m = L.marker([p.lat, p.lon], { icon: pinIcon(p.cat, isVisited(p.id), p.listed !== false), title: p.name, placeId: p.id });
     m.bindPopup(() => popup(p), { maxWidth: 320, autoPanPaddingTopLeft: [10, 70], autoPanPaddingBottomRight: [10, 10] });
     markers.set(p.id, m);
   }
@@ -251,7 +252,8 @@ function buildMarkers() {
 
 function refreshMarker(id) {
   const m = markers.get(id);
-  m.setIcon(pinIcon(byId.get(id).cat, isVisited(id)));
+  const p = byId.get(id);
+  m.setIcon(pinIcon(p.cat, isVisited(id), p.listed !== false));
   if (cluster.hasLayer(m)) cluster.refreshClusters(m);
   updateCounts();
   filtersDirty = true;
@@ -265,8 +267,8 @@ function popup(p) {
   const status = h("div", { class: "status", "aria-live": "polite" });
 
   const links = h("div", { class: "links" },
-    (p.links || []).filter((l) => safeUrl(l.url)).map((l, i) =>          // the Trust's own page is always first
-      h("a", { href: l.url, target: "_blank", rel: "noopener", class: i === 0 ? "nt" : null }, l.label)),
+    (p.links || []).filter((l) => safeUrl(l.url)).map((l, i) =>          // a Trust place's own page is always first
+      h("a", { href: l.url, target: "_blank", rel: "noopener", class: i === 0 && p.listed !== false ? "nt" : null }, l.label)),
     h("a", { href: `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}`, target: "_blank", rel: "noopener" }, "Directions"));
 
   const walks = (p.walks || []).filter((w) => safeUrl(w.url));
@@ -313,6 +315,10 @@ function popup(p) {
   return h("div", { class: "pop" },
     h("div", { class: "type" }, glyphBadge(p.cat), CATS[p.cat].label + (p.org === "nts" ? " · " + ORGS.nts.short : "")),
     h("h3", {}, p.name),
+    p.listed === false
+      ? h("p", { class: "owned-note" }, `Not a ${ORGS[p.org].label} place to visit: the Trust owns it but has no visitor page for it. ` +
+          "It stays on the map because it has your notes.")
+      : null,
     h("p", {}, p.descr || ""),
     links,
     walkList,
