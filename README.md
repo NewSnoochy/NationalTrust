@@ -6,8 +6,10 @@ in free at each other's properties. It's for keeping track of where you've been.
 
 **Live site:** https://newsnoochy.github.io/NationalTrust/ (sign-in required)
 
-- About 670 places. Each pin's **colour** shows whether you've been: brick red
-  means not yet, and green with a gold tick means visited. The **white glyph**
+- About 690 places to visit, plus about 210 the Trusts only own. Each pin's
+  **colour** shows whether you've been: brick red means not yet, and green with
+  a gold tick means visited. Places a Trust only owns are slate blue (with the
+  tick once visited). The **white glyph**
   shows what kind of place it is (house, castle, garden, countryside, coast,
   ancient site, mill/industry, abbey/church, museum/other).
 - Click a pin to see a one-line description, links (the Trust's page,
@@ -80,14 +82,14 @@ next update.
   published places are never merged into one;
 - refuses to change anything if either Trust's list would shrink by more than
   10%, since that means a source was down, not that places closed;
-- keeps only the Trusts' **places to visit**: ones with a page on the
-  Trust's website. Wikidata and OpenStreetMap also list everything a Trust
-  merely owns (let cottages, farms, patches of woodland, a hotel), and those
-  are removed;
-- removes places the sources no longer list;
-- never removes a place that has a tick, rating or note. If it isn't a Trust
-  place to visit, it stays on the map with a faded pin and a note on its card
-  saying so.
+- tells the Trusts' **places to visit** (ones with a page on the Trust's
+  website) from land and buildings a Trust merely owns, which Wikidata and
+  OpenStreetMap also list (let cottages, farms, patches of woodland, a hotel).
+  Owned-only places get **slate-blue** pins and a note on their card, can be
+  hidden with the "Owned, not open to visit" filter, and aren't counted in the
+  visited totals;
+- removes places the sources no longer list, but never one that has a tick,
+  rating or note.
 
 Each run adds a line of counts to `UPDATES.log`. This also stops GitHub from
 switching off the schedule, which it does after 60 days without a commit. To

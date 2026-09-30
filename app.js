@@ -20,7 +20,7 @@ const ORGS = {
   nt:  { label: "National Trust", short: "National Trust" },
   nts: { label: "National Trust for Scotland", short: "NT for Scotland" },
 };
-const COL = { todo: "#b2472f", done: "#2e7d3a", gold: "#e3b341" };
+const COL = { todo: "#b2472f", done: "#2e7d3a", owned: "#4d6a8c", gold: "#e3b341" };
 const STROKE = 'fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"';
 const PIN = "M16 1C8.3 1 2 7.1 2 14.6 2 24.5 16 41 16 41s14-16.5 14-26.4C30 7.1 23.7 1 16 1z";
 
@@ -45,7 +45,8 @@ function glyphBadge(cat) {
 }
 
 const iconCache = new Map();
-// A place the Trust only owns (kept for its notes) gets a faded pin.
+// A place a Trust only owns (not one it opens to visitors) is slate blue
+// whether visited or not; the gold tick still shows a visit.
 function pinIcon(cat, visited, listed = true) {
   const key = cat + ":" + visited + ":" + listed;
   if (!iconCache.has(key)) {
@@ -54,8 +55,8 @@ function pinIcon(cat, visited, listed = true) {
         `<path d="M23.4 6.6l1.8 1.8 3.3-3.5" fill="none" stroke="#1d2320" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`
       : "";
     iconCache.set(key, L.divIcon({
-      className: listed ? "pin" : "pin owned",
-      html: `<svg width="32" height="42" viewBox="0 0 32 42"><path d="${PIN}" fill="${visited ? COL.done : COL.todo}" stroke="white" stroke-width="1.5"/>` +
+      className: "pin",
+      html: `<svg width="32" height="42" viewBox="0 0 32 42"><path d="${PIN}" fill="${!listed ? COL.owned : visited ? COL.done : COL.todo}" stroke="white" stroke-width="1.5"/>` +
             `<g transform="translate(7 5.6) scale(.75)" ${STROKE}>${CATS[cat].glyph}</g>${tick}</svg>`,
       iconSize: [32, 42], iconAnchor: [16, 41], popupAnchor: [0, -36],
     }));
@@ -316,8 +317,8 @@ function popup(p) {
     h("div", { class: "type" }, glyphBadge(p.cat), CATS[p.cat].label + (p.org === "nts" ? " · " + ORGS.nts.short : "")),
     h("h3", {}, p.name),
     p.listed === false
-      ? h("p", { class: "owned-note" }, `Not a ${ORGS[p.org].label} place to visit: the Trust owns it but has no visitor page for it. ` +
-          "It stays on the map because it has your notes.")
+      ? h("p", { class: "owned-note" }, `Owned by the ${ORGS[p.org].label}, but not one of its places to visit: ` +
+          "it has no visitor page on the Trust's website, so check access before you go.")
       : null,
     h("p", {}, p.descr || ""),
     links,
@@ -352,14 +353,20 @@ function save(id, patch, statusEl) {
 }
 
 // ---------------------------------------------------------------- filters
-let filter = { vis: "all", cats: Object.keys(CATS), orgs: Object.keys(ORGS), ...store.get("filter", {}) };
+let filter = { vis: "all", cats: Object.keys(CATS), orgs: Object.keys(ORGS), owned: true, ...store.get("filter", {}) };
+const isTrustPlace = (p) => p.listed !== false;
 
 function buildFilters() {
   $("orgs").replaceChildren(...Object.entries(ORGS).map(([key, o]) => {
     const box = h("input", { type: "checkbox", value: key, checked: filter.orgs.includes(key) });
     box.addEventListener("change", readFilters);
     return h("li", {}, h("label", {}, box, o.label, h("span", { class: "count", id: "count-org-" + key })));
-  }));
+  }), (() => {
+    const box = h("input", { type: "checkbox", id: "owned-box", checked: filter.owned });
+    box.addEventListener("change", readFilters);
+    return h("li", {}, h("label", {}, box, h("span", { class: "swatch owned" }), "Owned, not open to visit",
+      h("span", { class: "count", id: "count-owned" })));
+  })());
   const ul = $("cats");
   ul.replaceChildren(...Object.entries(CATS).map(([key, c]) => {
     const box = h("input", { type: "checkbox", value: key, checked: filter.cats.includes(key) });
@@ -386,7 +393,8 @@ function readFilters() {
   filter = {
     vis: document.querySelector('input[name="vis"]:checked').value,
     cats: [...$("cats").querySelectorAll("input:checked")].map((b) => b.value),
-    orgs: [...$("orgs").querySelectorAll("input:checked")].map((b) => b.value),
+    orgs: [...$("orgs").querySelectorAll("input:checked")].map((b) => b.value).filter((v) => ORGS[v]),
+    owned: $("owned-box").checked,
   };
   store.set("filter", filter);
   applyFilters();
@@ -394,6 +402,7 @@ function readFilters() {
 
 function passes(p) {
   if (!filter.cats.includes(p.cat) || !filter.orgs.includes(p.org)) return false;
+  if (!isTrustPlace(p) && !filter.owned) return false;
   if (filter.vis === "todo") return !isVisited(p.id);
   if (filter.vis === "done") return isVisited(p.id);
   return true;
@@ -405,15 +414,18 @@ function applyFilters() {
   cluster.addLayers(places.filter(passes).map((p) => markers.get(p.id)));
 }
 
+// Counts are of the Trusts' places to visit; owned-only places have their own.
 function updateCounts() {
-  const done = places.filter((p) => isVisited(p.id)).length;
-  $("progress").textContent = `${done} / ${places.length}`;
+  const trust = places.filter(isTrustPlace);
+  const done = trust.filter((p) => isVisited(p.id)).length;
+  $("progress").textContent = `${done} / ${trust.length}`;
   const count = (id, of) => {
     const el = $(id);
     if (el) el.textContent = `${of.filter((p) => isVisited(p.id)).length} / ${of.length}`;
   };
-  for (const key of Object.keys(CATS)) count("count-" + key, places.filter((p) => p.cat === key));
-  for (const key of Object.keys(ORGS)) count("count-org-" + key, places.filter((p) => p.org === key));
+  for (const key of Object.keys(CATS)) count("count-" + key, trust.filter((p) => p.cat === key));
+  for (const key of Object.keys(ORGS)) count("count-org-" + key, trust.filter((p) => p.org === key));
+  count("count-owned", places.filter((p) => !isTrustPlace(p)));
 }
 
 // ----------------------------------------------------------------- search

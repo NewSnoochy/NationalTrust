@@ -6,6 +6,7 @@
   --muted: #5f6b64;
   --line: #d9d4c5;
   --todo: #b2472f;      /* not visited: brick red */
+  --owned: #4d6a8c;     /* only owned by a Trust, not a place it opens to visitors: slate blue */
   --done: #2e7d3a;      /* visited: green, plus a tick so it never relies on colour alone */
   --gold: #e3b341;
   --radius: 10px;
@@ -92,6 +93,7 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: 
 .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: -1px; }
 .swatch.todo { background: var(--todo); }
 .swatch.done { background: var(--done); box-shadow: 0 0 0 2px var(--gold); }
+.swatch.owned { background: var(--owned); }
 
 /* glyph badge used in the filter list, search results and popups */
 .glyph { width: 22px; height: 22px; border-radius: 50%; background: var(--green-2); display: inline-grid; place-items: center; flex: none; }
@@ -100,7 +102,6 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: 
 /* ---------- markers */
 .pin { background: none; border: 0; }
 .pin svg { display: block; filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.45)); }
-.pin.owned svg { opacity: .55; }
 .cluster {
   width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
   background: conic-gradient(var(--done) calc(var(--p) * 1%), var(--todo) 0);
