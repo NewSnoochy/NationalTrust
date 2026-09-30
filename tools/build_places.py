@@ -48,7 +48,7 @@ ORGS = [
         "page_fmt": "https://www.nationaltrust.org.uk/visit/{0}/{1}",
         # The NT's sitemap of its place pages. It is not complete (Stourhead is
         # missing), so a place also counts if a source links it to an NT page.
-        "sitemap": "https://www.nationaltrust.org.uk/sitemap.xml", "sitemap_part": "/sitemap-place/", "sitemap_min": 500,
+        "sitemap": "https://www.nationaltrust.org.uk/sitemap.xml", "sitemap_part": "/sitemap-place/", "sitemap_min": 580,
         # Places no link or name ties to their Trust page: id -> sitemap slug,
         # or the page's address if the sitemap lacks it.
         "pages": {"Q1812832": "hadrians-wall-and-housesteads-fort", "Q6745232": "kinder-edale-and-the-high-peak",
@@ -57,7 +57,7 @@ ORGS = [
                   "Q7775833": "the-workhouse-and-infirmary", "osm-w180995329": "kinder-edale-and-the-high-peak",
                   "Q5176083": "https://www.nationaltrust.org.uk/visit/warwickshire/coughton-court"},
         # Sitemap pages the geocoder puts at a namesake: slug -> (lat, lon).
-        "page_coords": {"market-hall": (52.0513, -1.7807), "grange-barn": (51.8634, 0.6903)},
+        "page_coords": {"market-hall": (52.0513, -1.7807), "grange-barn": (51.8634, 0.6903), "sarn-y-plas": (52.8190, -4.6190)},
         "not_places": {"Q333515", "Q18160511"},          # the Trust itself; Heelis, its head office
         # Trust places no source above lists: Wikipedia title -> (lat, lon), or
         # None to take the article's own coordinates.
@@ -366,17 +366,28 @@ def http_text(url, tries=4):
 
 def fetch_sitemap(org):
     """Every place page the Trust's sitemap lists. A failure stops the whole
-    build: without the list, nothing can be told apart from a Trust place."""
+    build: without the list, nothing can be told apart from a Trust place.
+
+    The NT's sitemap pages overlap and shift between requests, so any one
+    read of them misses about a sixth of its places (629 in September 2026,
+    ~520 per read). They are read again until two reads in a row add nothing.
+    """
     try:
         index = http_text(org["sitemap"])
         parts = [u for u in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", index) if org["sitemap_part"] in u]
-        pages = set()
-        for u in parts:
-            for loc in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", http_text(u)):
-                m = re.fullmatch(org["page_rx"] + "/?", loc)
-                if m:
-                    pages.add(org["page_fmt"].format(*m.groups()))
-            time.sleep(1)
+        pages, quiet = set(), 0
+        for _ in range(12):
+            before = len(pages)
+            for u in parts:
+                for loc in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", http_text(u)):
+                    m = re.fullmatch(org["page_rx"] + "/?", loc)
+                    if m:
+                        pages.add(org["page_fmt"].format(*m.groups()))
+                time.sleep(1)
+            quiet = quiet + 1 if len(pages) == before else 0
+            if quiet == 2:
+                break
+            time.sleep(5)
     except Exception as e:  # noqa: BLE001
         raise SystemExit(f"Could not read the {org['name']} sitemap ({e}); nothing was changed.")
     if len(pages) < org["sitemap_min"]:
@@ -831,10 +842,12 @@ def link_trust_pages(org, places, sitemap, osm):
     by_id = {p["id"]: p for p in places}
     for p in places:
         p["page"] = None
-        if p["id"] in org["pages"]:
-            v = org["pages"][p["id"]]
+        v = org["pages"].get(p["id"])
+        if v and (v.startswith("http") or v in by_slug):
             p["page"] = v if v.startswith("http") else by_slug[v]
             continue
+        if v:
+            print(f"  hand-kept page {v} for {p['name']} is not in the sitemap; matching it as usual")
         for u in p.get("urls", []):
             p["page"] = trust_page(org, u, by_slug)
             if p["page"]:
