@@ -232,7 +232,7 @@ function initMap() {
       const ms = c.getAllChildMarkers();
       const done = ms.filter((m) => isVisited(m.options.placeId)).length;
       return L.divIcon({
-        className: listed ? "pin" : "pin owned", iconSize: [40, 40],
+        className: "pin", iconSize: [40, 40],
         html: `<div class="cluster" style="--p:${Math.round((100 * done) / ms.length)}" title="${done} of ${ms.length} visited"><span>${ms.length}</span></div>`,
       });
     },
