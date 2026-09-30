@@ -401,8 +401,9 @@ function readFilters() {
 }
 
 function passes(p) {
-  if (!filter.cats.includes(p.cat) || !filter.orgs.includes(p.org)) return false;
-  if (!isTrustPlace(p) && !filter.owned) return false;
+  if (!filter.cats.includes(p.cat)) return false;
+  // Trust places follow the Trust boxes; owned-only places follow their own box alone.
+  if (isTrustPlace(p) ? !filter.orgs.includes(p.org) : !filter.owned) return false;
   if (filter.vis === "todo") return !isVisited(p.id);
   if (filter.vis === "done") return isVisited(p.id);
   return true;
@@ -464,7 +465,9 @@ function goTo(p) {
   $("search").value = "";
   $("search").blur();
   if (!passes(p)) {                     // make sure the chosen place is on the map
-    filter = { vis: "all", cats: [...new Set([...filter.cats, p.cat])], orgs: [...new Set([...filter.orgs, p.org])] };
+    const trust = isTrustPlace(p);
+    filter = { vis: "all", cats: [...new Set([...filter.cats, p.cat])],
+               orgs: trust ? [...new Set([...filter.orgs, p.org])] : filter.orgs, owned: filter.owned || !trust };
     store.set("filter", filter);
     buildFilters();
     applyFilters();
