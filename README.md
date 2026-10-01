@@ -102,6 +102,12 @@ python tools/build_places.py --refresh   # re-download everything
 python tools/check_coverage.py           # spot-check well-known places
 ```
 
+Places no source links to a Wikipedia article get one if Wikipedia has an
+article within 2 km whose title is the place's name (give or take a word like
+"Bay" or "House"). Wikipedia is asked one request at a time, about a second
+apart, and the opening paragraphs used for descriptions are fetched 20 to a
+request.
+
 Whether a place is a Trust place to visit comes from each Trust's **sitemap**,
 the list of place pages it publishes for search engines. The National Trust's
 is incomplete (Stourhead isn't in it), so a place also counts if Wikidata,

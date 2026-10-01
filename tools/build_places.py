@@ -967,7 +967,13 @@ def locate(org, name, url, box):
     return None
 
 
+# Wikipedia asks API clients to send one request at a time and to go gently;
+# every call below waits this long first.
+WP_PAUSE = 1.2
+
+
 def summaries_for(titles):
+    """Each article's opening paragraph, 20 articles per request."""
     spath = os.path.join(CACHE, "wikipedia.json")
     old = {}
     if os.path.exists(spath) and not REFRESH:
@@ -975,19 +981,83 @@ def summaries_for(titles):
             old = json.load(f)
     out = dict(old)
     todo = [tt for tt in titles if tt not in old]
-    print(f"\nWikipedia summaries… ({len(todo)} to fetch)")
-    for i, tt in enumerate(todo):
-        u = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(tt.replace(" ", "_"), safe="")
+    print(f"\nWikipedia summaries… ({len(todo)} to fetch, 20 a request)")
+    for i in range(0, len(todo), 20):
+        batch = todo[i:i + 20]
+        time.sleep(WP_PAUSE)
         try:
-            out[tt] = http_json(u, tries=4).get("extract", "")     # 4 tries: Wikipedia rate-limits (429) bursts
-        except Exception:  # noqa: BLE001 - a missing page just has no summary
-            out[tt] = ""
-        if i and i % 100 == 0:
-            print(f"   {i}/{len(todo)}")
-        time.sleep(0.2)
+            r = wp_api({"action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1, "exlimit": 20,
+                        "redirects": 1, "titles": "|".join(batch)})["query"]
+        except Exception:  # noqa: BLE001 - a missing summary just means another description
+            r = {}
+        # The answer is keyed by each page's own title, after normalising
+        # ("Hill_Top" -> "Hill Top") and following redirects.
+        alias = {}
+        for k in ("normalized", "redirects"):
+            for m in r.get(k, []):
+                alias[m["to"]] = alias.get(m["from"], m["from"])
+        for pg in r.get("pages", []):
+            t = pg.get("title", "")
+            src = alias.get(t, t)
+            src = alias.get(src, src)
+            out[src] = pg.get("extract", "")
+        for tt in batch:
+            out.setdefault(tt, "")
     with open(spath, "w", encoding="utf-8") as f:
         json.dump(out, f)
     return out
+
+
+# An article may leave out a word that only says what kind of place the pin
+# is ("Hinton Ampner House" -> Hinton Ampner, "Poldhu Cove" -> Poldhu), or add
+# one that names the landform ("The Dodman" -> Dodman Point). Any other
+# difference means a different place: "Ventnor Downs" is not Ventnor, the town.
+WIKI_MAY_DROP = {"cove", "bay", "beach", "sand", "point", "head", "the", "museum", "house", "hall", "garden", "estate", "village"}
+WIKI_MAY_ADD = {"down", "hill", "point", "head", "the"}
+NOT_A_PLACE_ARTICLE = re.compile(r"\((?:[^)]*\b(?:constituency|electoral|ward|parish|district|station|band|ship|film)\b[^)]*)\)$", re.I)
+
+
+def wiki_title_fits(title, name):
+    if NOT_A_PLACE_ARTICLE.search(title):
+        return False
+    def core(n):                                 # "Black Head, Cornwall" -> "Black Head"
+        return re.sub(r"\s*\([^)]*\)$", "", n).split(", ")[0]
+    tt, nt = name_tokens(core(title)), name_tokens(core(name))
+    return bool(tt - MATCH_GENERIC) and tt - MATCH_GENERIC == nt - MATCH_GENERIC         and nt - tt <= WIKI_MAY_DROP and tt - nt <= WIKI_MAY_ADD
+
+
+def wiki_nearby(places):
+    """Wikipedia articles for places no source linked to one: an article
+    within 2 km of the pin whose name is the place's name, give or take
+    generic words ("Horner Wood" -> "Horner Woods"). One request per place."""
+    gpath = os.path.join(CACHE, "wp_geosearch.json")
+    cache = {}
+    if os.path.exists(gpath) and not REFRESH:
+        with open(gpath, encoding="utf-8") as f:
+            cache = json.load(f)
+    todo = [p for p in places if not p.get("wiki")]
+    print(f"\nWikipedia articles near {len(todo)} places without one…")
+    found = 0
+    for n, p in enumerate(todo):
+        key = f"{p['lat']:.4f},{p['lon']:.4f}"
+        if key not in cache:
+            time.sleep(WP_PAUSE)
+            try:
+                r = wp_api({"action": "query", "list": "geosearch", "gscoord": f"{p['lat']}|{p['lon']}",
+                            "gsradius": 2000, "gslimit": 50, "gsnamespace": 0})
+                cache[key] = [(g["title"], g["dist"]) for g in r["query"]["geosearch"]]
+            except Exception:  # noqa: BLE001 - try again next run
+                continue
+        for title, _dist in cache[key]:              # nearest first
+            if wiki_title_fits(title, p["name"]):
+                p["wiki"] = title
+                found += 1
+                break
+        if n and n % 50 == 0:
+            print(f"   {n}/{len(todo)}")
+    with open(gpath, "w", encoding="utf-8") as f:
+        json.dump(cache, f)
+    print(f"  found {found}")
 
 
 CAT_WORD = {"house": "Historic house", "castle": "Castle", "garden": "Garden", "nature": "Countryside",
@@ -1032,6 +1102,7 @@ def main():
             if p["id"] not in seen:          # one place, one pin, even if both Trusts claim it
                 seen.add(p["id"])
                 places.append(p)
+    wiki_nearby(places)
     summaries = summaries_for(sorted({p["wiki"] for p in places if p.get("wiki")}))
     rows = sorted((to_row(p, summaries) for p in places), key=lambda r: r["name"])
 
