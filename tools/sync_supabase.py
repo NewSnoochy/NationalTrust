@@ -64,7 +64,7 @@ def main():
         existing = select_all("places", "id,org,name,listed")
     except SystemExit as e:
         if "listed" in str(e):
-            raise SystemExit("The places table has no 'listed' column yet: run supabase/migrate_listed.sql "
+            raise SystemExit("The places table has no 'listed' column yet: re-run supabase/schema.sql "
                              "in the Supabase SQL Editor first. Nothing was changed.")
         raise
     print(f"{len(existing)} places in the database")

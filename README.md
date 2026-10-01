@@ -64,12 +64,8 @@ update needs to write places, lives only in the repo's Actions secrets.
 7. **Actions → Update places → Run workflow** loads the places for the first
    time.
 
-A project set up before sharing and Scotland were added needs one run of
-[`supabase/migrate_shared_and_scotland.sql`](supabase/migrate_shared_and_scotland.sql).
-It merges everyone's existing ticks, ratings and notes into the shared table.
-One set up before places were checked against the Trusts' websites needs one
-run of [`supabase/migrate_listed.sql`](supabase/migrate_listed.sql) before its
-next update.
+`schema.sql` is safe to re-run, and re-running it brings an older project's
+tables up to date.
 
 ## How the place list is updated
 
@@ -99,7 +95,7 @@ To build locally without touching the database:
 
 ```
 python tools/build_places.py --refresh   # re-download everything
-python tools/check_coverage.py           # spot-check well-known places
+python tools/check_coverage.py           # well-known places missing or marked owned-only
 ```
 
 Places no source links to a Wikipedia article get one if Wikipedia has an
