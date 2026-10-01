@@ -919,8 +919,10 @@ def link_trust_pages(org, places, sitemap, osm):
             near["page"] = url           # the place it names, which had an old link or none
             attached += 1
             continue
-        if d < 0.35:
+        if d < 0.35 and near["page"] not in listed:
             continue                     # part of a place already on the map
+        # Next to a place with a Trust page of its own (Priorwood Garden is
+        # 250 m from Harmony Garden): a separate place, so a separate pin.
         pid = f"{org['key']}-{slug}"
         p = {"id": pid, "name": name, "lat": pos[0], "lon": pos[1], "cat": cat_from_name(name) or "nature",
              "wd_desc": "", "wiki": None, "qid": None, "website": None, "osm_desc": None, "src": "sitemap",
