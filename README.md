@@ -81,7 +81,9 @@ tables up to date.
 - tells the Trusts' **places to visit** (ones with a page on the Trust's
   website) from land and buildings a Trust merely owns, which Wikidata and
   OpenStreetMap also list (let cottages, farms, patches of woodland, a hotel).
-  Owned-only places get **slate-blue** pins and a note on their card, can be
+  Owned-only places get **slate-blue** pins, a note on their card and a
+  "Search National Trust site" link (it often finds a walk or a nearby place
+  that mentions them), can be
   hidden with the "Owned, not open to visit" filter, and aren't counted in the
   visited totals;
 - removes places the sources no longer list, but never one that has a tick,

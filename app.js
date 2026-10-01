@@ -17,8 +17,8 @@ const CATS = {
 // The National Trust's members get in free at National Trust for Scotland
 // places and vice versa, so both are on the map.
 const ORGS = {
-  nt:  { label: "National Trust", short: "National Trust" },
-  nts: { label: "National Trust for Scotland", short: "NT for Scotland" },
+  nt:  { label: "National Trust", short: "National Trust", search: "https://www.nationaltrust.org.uk/search?query=" },
+  nts: { label: "National Trust for Scotland", short: "NT for Scotland", search: "https://www.nts.org.uk/search?query=" },
 };
 const COL = { todo: "#b2472f", done: "#2e7d3a", owned: "#4d6a8c", gold: "#e3b341" };
 const STROKE = 'fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"';
@@ -267,8 +267,15 @@ function popup(p) {
   const v = visits.get(p.id) || { visited: false, rating: null, notes: "" };
   const status = h("div", { class: "status", "aria-live": "polite" });
 
+  // A place a Trust only owns has no page of its own there, but a search of
+  // the Trust's site often turns up a walk, a nearby place or news about it.
+  const shown = (p.links || []).filter((l) => safeUrl(l.url));
+  if (p.listed === false) {
+    const at = shown.findIndex((l) => l.label === "Wikipedia") + 1;
+    shown.splice(at, 0, { label: `Search ${ORGS[p.org].short} site`, url: ORGS[p.org].search + encodeURIComponent(p.name) });
+  }
   const links = h("div", { class: "links" },
-    (p.links || []).filter((l) => safeUrl(l.url)).map((l, i) =>          // a Trust place's own page is always first
+    shown.map((l, i) =>                                                     // a Trust place's own page is always first
       h("a", { href: l.url, target: "_blank", rel: "noopener", class: i === 0 && p.listed !== false ? "nt" : null }, l.label)),
     h("a", { href: `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}`, target: "_blank", rel: "noopener" }, "Directions"));
 
