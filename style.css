@@ -66,6 +66,13 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: 
 .results li { padding: 7px 8px; border-radius: 6px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
 .results li:hover, .results li.active { background: var(--cream); }
 .results small { color: var(--muted); margin-left: auto; white-space: nowrap; }
+.results li.head { cursor: default; padding: 6px 8px 2px; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.results li.head:hover, .results li.note:hover { background: none; }
+.results li.note { cursor: default; color: var(--muted); font-size: .9rem; }
+.results .pinmark { width: 22px; text-align: center; color: var(--green); font-size: 1.1rem; }
+.results .area { display: flex; flex-direction: column; min-width: 0; }
+.results .where { color: var(--muted); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.leaflet-tooltip.here { font-weight: 600; }
 .chip {
   background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.35);
   border-radius: 999px; padding: 6px 12px; white-space: nowrap;

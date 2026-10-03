@@ -18,7 +18,12 @@ in free at each other's properties. It's for keeping track of where you've been.
 - **Shared:** everyone who can sign in sees and edits the same ticks, ratings
   and notes. A change made on one device shows up live on any other map that's
   open, and each card says who last changed it.
-- Search by name, filter by Trust, by type, or by visited/not visited, and use
+- **Search** finds Trust places by name, and also towns, villages and full
+  postcodes (via OpenStreetMap's Nominatim): choosing "Sheffield" centres the
+  map there, shows the Trust places around it, and each town in the list says
+  how many are within 20 km. Enter picks an exact Trust place name, otherwise
+  the first town.
+- Filter by Trust, by type, or by visited/not visited, and use
   "where am I". There's also a satellite view.
 - **Keeps itself up to date:** on the 1st of each month, a GitHub Action
   rebuilds the place list from its sources and loads new places into the

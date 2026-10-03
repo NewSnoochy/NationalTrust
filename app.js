@@ -437,35 +437,139 @@ function updateCounts() {
 }
 
 // ----------------------------------------------------------------- search
+// One box finds both: Trust places by name (from the list already loaded),
+// and towns, villages and postcodes from OpenStreetMap's geocoder,
+// Nominatim. Choosing a town moves the map there and shows the Trust places
+// around it. Nominatim asks for at most one request a second, so lookups wait
+// until typing pauses and are remembered.
 const norm = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-let hits = [], active = -1;
+const NEAR_KM = 20;
+let items = [], active = -1, areas = [], areaQuery = "", areaTimer, lastLookup = 0, here, enterFor = null;
+const areaCache = new Map();
 
-$("search").addEventListener("input", () => {
+function kmBetween(a, b) {
+  const r = Math.PI / 180, x = Math.sin(((b[0] - a[0]) * r) / 2), y = Math.sin(((b[1] - a[1]) * r) / 2);
+  return 12742 * Math.asin(Math.sqrt(x * x + Math.cos(a[0] * r) * Math.cos(b[0] * r) * y * y));
+}
+
+function renderResults() {
   const q = norm($("search").value.trim());
   const ul = $("results");
-  if (q.length < 2) { ul.hidden = true; return; }
-  hits = places.filter((p) => norm(p.name).includes(q))
+  if (q.length < 2) { ul.hidden = true; items = []; return; }
+  const found = places.filter((p) => norm(p.name).includes(q))
     .sort((a, b) => norm(b.name).startsWith(q) - norm(a.name).startsWith(q) || a.name.localeCompare(b.name))
-    .slice(0, 10);
-  active = -1;
-  ul.replaceChildren(...(hits.length ? hits.map((p, i) =>
-    h("li", { onmousedown: (e) => { e.preventDefault(); goTo(p); } }, glyphBadge(p.cat), p.name,
-      h("small", {}, isVisited(p.id) ? "✓ visited" : CATS[p.cat].label))) : [h("li", {}, "No matching places")]));
+    .slice(0, 8);
+  const towns = areaQuery === q ? areas : [];
+  items = [...found.map((p) => ({ place: p })), ...towns.map((a) => ({ area: a }))];
+  active = Math.min(active, items.length - 1);
+  const rows = [];
+  if (found.length) rows.push(h("li", { class: "head" }, "Trust places"));
+  found.forEach((p, n) => rows.push(h("li", { "data-i": n, onmousedown: (e) => { e.preventDefault(); choose(n); } },
+    glyphBadge(p.cat), p.name, h("small", {}, isVisited(p.id) ? "✓ visited" : CATS[p.cat].label))));
+  if (q.length >= 3) {
+    rows.push(h("li", { class: "head" }, "Towns and areas"));
+    if (towns.length) {
+      towns.forEach((a, k) => {
+        const n = found.length + k;
+        const near = places.filter((p) => passes(p) && kmBetween([a.lat, a.lon], [p.lat, p.lon]) <= NEAR_KM).length;
+        rows.push(h("li", { "data-i": n, onmousedown: (e) => { e.preventDefault(); choose(n); } },
+          h("span", { class: "pinmark", "aria-hidden": "true" }, "⌖"),
+          h("span", { class: "area" }, a.name, h("span", { class: "where" }, a.where)),
+          h("small", {}, `${near} within ${NEAR_KM} km`)));
+      });
+    } else {
+      rows.push(h("li", { class: "note" }, areaQuery === q ? "No towns or areas found" : "Looking up…"));
+    }
+  } else if (!found.length) {
+    rows.push(h("li", { class: "note" }, "No matching places"));
+  }
+  ul.replaceChildren(...rows);
+  [...ul.querySelectorAll("li[data-i]")].forEach((li) => li.classList.toggle("active", +li.dataset.i === active));
   ul.hidden = false;
+}
+
+function lookupAreas(q) {
+  clearTimeout(areaTimer);
+  if (q.length < 3) return;
+  if (areaCache.has(q)) { areas = areaCache.get(q); areaQuery = q; renderResults(); return; }
+  const wait = Math.max(450, 1100 - (Date.now() - lastLookup));          // pause in typing, and 1 a second
+  areaTimer = setTimeout(async () => {
+    lastLookup = Date.now();
+    const u = "https://nominatim.openstreetmap.org/search?" + new URLSearchParams({
+      q, format: "jsonv2", countrycodes: "gb,im,je,gg", limit: "5", "accept-language": "en" });
+    let found = [];
+    try {
+      const r = await fetch(u);
+      if (r.ok) found = (await r.json()).map((x) => ({
+        name: x.name || x.display_name.split(",")[0],
+        where: x.display_name.split(",").slice(1, 3).join(",").trim(),
+        lat: +x.lat, lon: +x.lon,
+        box: x.boundingbox && [[+x.boundingbox[0], +x.boundingbox[2]], [+x.boundingbox[1], +x.boundingbox[3]]],
+      }));
+    } catch { /* offline: only Trust places are listed */ }
+    areaCache.set(q, found);
+    if (norm($("search").value.trim()) === q) {
+      areas = found; areaQuery = q; renderResults();
+      if (enterFor === q) { enterFor = null; enter(); }
+    }
+  }, wait);
+}
+
+$("search").addEventListener("input", () => {
+  active = -1;
+  enterFor = null;
+  renderResults();
+  lookupAreas(norm($("search").value.trim()));
 });
 $("search").addEventListener("keydown", (e) => {
-  const items = $("results").children;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
-    active = Math.max(0, Math.min(hits.length - 1, active + (e.key === "ArrowDown" ? 1 : -1)));
-    [...items].forEach((li, i) => li.classList.toggle("active", i === active));
-  } else if (e.key === "Enter" && hits.length) {
-    goTo(hits[Math.max(active, 0)]);
+    active = Math.max(0, Math.min(items.length - 1, active + (e.key === "ArrowDown" ? 1 : -1)));
+    renderResults();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    enter();
   } else if (e.key === "Escape") {
     $("results").hidden = true;
   }
 });
 $("search").addEventListener("blur", () => setTimeout(() => ($("results").hidden = true), 150));
+
+// Enter opens the highlighted row. With none, "Stourhead" means the Trust
+// place of that name, but "Sheffield" means the city, not Sheffield Park: so
+// an exact name wins, then the first town (waiting for the lookup if it is
+// still going), then the first Trust place.
+function enter() {
+  const q = norm($("search").value.trim());
+  if (active >= 0) return choose(active);
+  const exact = items.findIndex((it) => it.place && norm(it.place.name) === q);
+  if (exact >= 0) return choose(exact);
+  if (q.length >= 3 && areaQuery !== q) { enterFor = q; return; }
+  const town = items.findIndex((it) => it.area);
+  choose(town >= 0 ? town : 0);
+}
+
+function choose(n) {
+  const it = items[n];
+  if (!it) return;
+  if (it.place) { goTo(it.place); return; }
+  goToArea(it.area);
+}
+
+// Centre on a town and show the Trust places around it: zoomed to the town
+// itself, but never so close that the places within NEAR_KM are off screen.
+function goToArea(a) {
+  $("results").hidden = true;
+  $("search").value = "";
+  $("search").blur();
+  const centre = L.latLng(a.lat, a.lon);
+  const reach = centre.toBounds(NEAR_KM * 2000);
+  const box = a.box ? L.latLngBounds(a.box) : reach;
+  map.fitBounds(box.contains(reach) ? box : reach, { padding: [20, 20] });
+  if (here) here.remove();
+  here = L.circleMarker(centre, { radius: 7, color: "#fff", weight: 2, fillColor: "#1f4d3a", fillOpacity: 1 })
+    .bindTooltip(a.name, { permanent: true, direction: "top", offset: [0, -8], className: "here" }).addTo(map);
+}
 
 function goTo(p) {
   $("results").hidden = true;
