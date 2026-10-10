@@ -143,6 +143,8 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: 
 }
 .pop .rating button.on { background: var(--gold); border-color: #b88a1c; font-weight: 700; }
 .pop .rating button.in { background: #f7e7b5; }
+.pop .scores { font-size: .8rem; color: var(--muted); margin-top: 4px; }
+.pop .scores strong { color: var(--ink); }
 .pop textarea {
   font: inherit; font-size: .88rem; width: 100%; min-height: 64px; resize: vertical;
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;

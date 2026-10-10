@@ -13,8 +13,10 @@ in free at each other's properties. It's for keeping track of where you've been.
   shows what kind of place it is (house, castle, garden, countryside, coast,
   ancient site, mill/industry, abbey/church, museum/other).
 - Click a pin to see a one-line description, links (the Trust's page,
-  Wikipedia, NT walks, directions), a **Visited** tick, a **0–10 rating** and
-  **notes**. Everything saves automatically.
+  Wikipedia, NT walks, directions), a **Visited** tick, **your own 0–10
+  score** (underneath: "Our score", the average of the scores given, and
+  each person's own) and **notes**.
+  Everything saves automatically.
 - **Shared:** everyone who can sign in sees and edits the same ticks, ratings
   and notes. A change made on one device shows up live on any other map that's
   open, and each card says who last changed it.
@@ -40,8 +42,10 @@ GitHub Pages can only serve static files, so sign-in and storage are handled by
   readable **only by signed-in users**. It is never committed to this repo
   (`build/` is gitignored), so a visitor who isn't signed in gets a login box
   and nothing else.
-- Ticks, ratings and notes live in the `shared_visits` table, which signed-in
-  users can read and write. Nobody else can.
+- Ticks and notes live in the `shared_visits` table, which signed-in users can
+  read and write. Scores live in the `ratings` table, one row per person per
+  place: signed-in users can read them all but can only set their own. Nobody
+  else can see either.
 
 The page's code is public (this repo), and so are `config.js`'s URL and
 publishable key. That's by design: the key can do nothing that the

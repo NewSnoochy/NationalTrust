@@ -129,7 +129,8 @@ let map, cluster, user;
 const places = [];                  // rows from public.places
 const byId = new Map();             // id -> place
 const markers = new Map();          // id -> L.Marker
-const visits = new Map();           // id -> { visited, rating, notes, by, at } - shared by all users
+const visits = new Map();           // id -> { visited, notes, by, at } - shared by all users
+const ratings = new Map();          // id -> Map(email -> score 0-10), one score each
 let filtersDirty = false;
 
 const isVisited = (id) => !!visits.get(id)?.visited;
@@ -144,11 +145,26 @@ async function fetchAll(table, cols) {
   }
 }
 
-const visitFromRow = (v) => ({ visited: v.visited, rating: v.rating, notes: v.notes || "", by: v.updated_by, at: v.updated_at });
+const visitFromRow = (v) => ({ visited: v.visited, notes: v.notes || "", by: v.updated_by, at: v.updated_at });
+
+function setRating(id, email, r) {
+  if (!ratings.has(id)) ratings.set(id, new Map());
+  if (r == null) ratings.get(id).delete(email); else ratings.get(id).set(email, r);
+}
+const myRating = (id) => ratings.get(id)?.get(user.email) ?? null;
+const nameOf = (email) => {
+  if (email === user.email) return "you";
+  const n = email.split("@")[0].split("+")[0].split(/[._]/)[0];          // "melissa.smith@…" -> "Melissa"
+  return n.charAt(0).toUpperCase() + n.slice(1);
+};
 
 // When the other person ticks, rates or writes a note, their change arrives
 // here and the pin (and the card, if it is open and not being typed in) updates.
 function listenForChanges() {
+  const repaint = (id) => {
+    const pop = markers.get(id).getPopup();
+    if (pop?.isOpen() && !pop.getElement()?.contains(document.activeElement)) pop.update();
+  };
   sb.channel("shared-visits")
     .on("postgres_changes", { event: "*", schema: "public", table: "shared_visits" }, ({ new: row }) => {
       if (!row?.place_id || !byId.has(row.place_id)) return;
@@ -156,8 +172,12 @@ function listenForChanges() {
       const was = isVisited(row.place_id);
       visits.set(row.place_id, visitFromRow(row));
       if (was !== isVisited(row.place_id)) refreshMarker(row.place_id);
-      const pop = markers.get(row.place_id).getPopup();
-      if (pop?.isOpen() && !pop.getElement()?.contains(document.activeElement)) pop.update();
+      repaint(row.place_id);
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "ratings" }, ({ new: row }) => {
+      if (!row?.place_id || !byId.has(row.place_id) || row.rated_by === user.email) return;
+      setRating(row.place_id, row.rated_by, row.rating);
+      repaint(row.place_id);
     })
     .subscribe();
 }
@@ -171,9 +191,10 @@ async function start(u) {
   $("who").textContent = u.email;
   initMap();
   try {
-    const [pl, vs] = await Promise.all([
+    const [pl, vs, rs] = await Promise.all([
       fetchAll("places", "*"),
-      fetchAll("shared_visits", "place_id,visited,rating,notes,updated_by,updated_at"),
+      fetchAll("shared_visits", "place_id,visited,notes,updated_by,updated_at"),
+      fetchAll("ratings", "place_id,rated_by,rating"),
     ]);
     for (const p of pl) {
       if (!CATS[p.cat]) p.cat = "other";
@@ -181,6 +202,7 @@ async function start(u) {
       places.push(p); byId.set(p.id, p);
     }
     for (const v of vs) visits.set(v.place_id, visitFromRow(v));
+    for (const r of rs) setRating(r.place_id, r.rated_by, r.rating);
     $("loading").hidden = true;
     if (!places.length) { $("loading").hidden = false; $("loading").textContent = "No places yet - run the Update places action on GitHub."; }
     buildMarkers();
@@ -264,7 +286,7 @@ function refreshMarker(id) {
 const safeUrl = (u) => (/^https?:\/\//i.test(u) ? u : null);
 
 function popup(p) {
-  const v = visits.get(p.id) || { visited: false, rating: null, notes: "" };
+  const v = visits.get(p.id) || { visited: false, notes: "" };
   const status = h("div", { class: "status", "aria-live": "polite" });
 
   // A place a Trust only owns has no page of its own there, but a search of
@@ -289,23 +311,32 @@ function popup(p) {
   const tick = h("input", { type: "checkbox", checked: v.visited });
   tick.addEventListener("change", () => save(p.id, { visited: tick.checked }, status));
 
+  // Your own score is the row of buttons; underneath, everyone's scores and their average.
   const buttons = [];
-  const paintRating = (r) => buttons.forEach((b, i) => {
-    b.classList.toggle("on", i === r);
-    b.classList.toggle("in", r != null && i < r);
-    b.setAttribute("aria-pressed", String(i === r));
-  });
+  const scores = h("div", { class: "scores" });
+  const paintRating = () => {
+    const r = myRating(p.id);
+    buttons.forEach((b, i) => {
+      b.classList.toggle("on", i === r);
+      b.classList.toggle("in", r != null && i < r);
+      b.setAttribute("aria-pressed", String(i === r));
+    });
+    const all = [...(ratings.get(p.id) || [])].sort(([a], [b]) => (b === user.email) - (a === user.email));
+    const avg = all.reduce((t, [, n]) => t + n, 0) / all.length;
+    scores.replaceChildren(...(all.length
+      ? [h("strong", {}, `Our score ${Math.round(avg * 10) / 10}`), " · " + all.map(([e, n]) => `${nameOf(e)} ${n}`).join(", ")]
+      : ["No scores yet"]));
+  };
   for (let i = 0; i <= 10; i++) {
-    buttons.push(h("button", { type: "button", title: `Rate ${i} out of 10`, onclick: () => {
-      const cur = visits.get(p.id)?.rating ?? null;
-      const r = cur === i ? null : i;                         // tap the chosen score again to clear it
-      paintRating(r);
-      const patch = { rating: r };
-      if (r != null && !tick.checked) { tick.checked = true; patch.visited = true; }   // rating it means you went
-      save(p.id, patch, status);
+    buttons.push(h("button", { type: "button", title: `Score ${i} out of 10`, onclick: () => {
+      const r = myRating(p.id) === i ? null : i;              // tap the chosen score again to clear it
+      setRating(p.id, user.email, r);
+      paintRating();
+      saveRating(p.id, status);
+      if (r != null && !tick.checked) { tick.checked = true; save(p.id, { visited: true }, status); }   // scoring it means you went
     } }, String(i)));
   }
-  paintRating(v.rating);
+  paintRating();
 
   const notes = h("textarea", { placeholder: "Notes (you both see these): who went, what to see next time…", rows: 3 });
   notes.value = v.notes || "";
@@ -332,8 +363,8 @@ function popup(p) {
     walkList,
     h("div", { class: "mine" },
       h("label", { class: "visited" }, tick, "Visited"),
-      h("div", {}, h("div", { class: "rating-label" }, h("span", {}, "Our rating"), h("span", {}, "0 = poor · 10 = superb")),
-        h("div", { class: "rating", role: "group", "aria-label": "Rating 0 to 10" }, buttons)),
+      h("div", {}, h("div", { class: "rating-label" }, h("span", {}, "Your score"), h("span", {}, "0 = poor · 10 = superb")),
+        h("div", { class: "rating", role: "group", "aria-label": "Your score, 0 to 10" }, buttons), scores),
       notes,
       h("div", { class: "foot" }, changed, status)));
 }
@@ -342,7 +373,7 @@ function popup(p) {
 // slow early request can never land after, and undo, a later one.
 const queues = new Map();
 function save(id, patch, statusEl) {
-  const cur = { ...(visits.get(id) || { visited: false, rating: null, notes: "" }), ...patch,
+  const cur = { ...(visits.get(id) || { visited: false, notes: "" }), ...patch,
                 by: user.email, at: new Date().toISOString() };
   const was = isVisited(id);
   visits.set(id, cur);
@@ -351,12 +382,25 @@ function save(id, patch, statusEl) {
   const q = (queues.get(id) || Promise.resolve()).then(async () => {
     const s = visits.get(id);
     const { error } = await sb.from("shared_visits").upsert({
-      place_id: id, visited: s.visited, rating: s.rating, notes: s.notes,
+      place_id: id, visited: s.visited, notes: s.notes,
       updated_at: s.at, updated_by: user.email,
     });
     say(statusEl, error ? "Not saved: " + error.message : "Saved ✓", !!error);
   });
   queues.set(id, q);
+}
+
+// Your score is a row of your own, so it can never overwrite the other person's.
+const ratingQueues = new Map();
+function saveRating(id, statusEl) {
+  say(statusEl, "Saving…");
+  const q = (ratingQueues.get(id) || Promise.resolve()).then(async () => {
+    const { error } = await sb.from("ratings").upsert({
+      place_id: id, rated_by: user.email, rating: myRating(id), updated_at: new Date().toISOString(),
+    });
+    say(statusEl, error ? "Not saved: " + error.message : "Saved ✓", !!error);
+  });
+  ratingQueues.set(id, q);
 }
 
 // ---------------------------------------------------------------- filters

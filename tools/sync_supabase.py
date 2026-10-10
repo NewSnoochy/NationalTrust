@@ -87,6 +87,7 @@ def main():
                              "A source is probably down; nothing was changed.")
 
     in_use = {v["place_id"] for v in select_all("shared_visits", "place_id")}
+    in_use |= {v["place_id"] for v in select_all("ratings", "place_id")}
     old_ids = {r["id"] for r in existing}
     new = [r for r in rows if r["id"] not in old_ids]
     for i in range(0, len(rows), 200):
