@@ -40,7 +40,7 @@ jobs:
           PROJECT_REF: qkhlfegiwezkplvmgwji
         run: |
           if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
-            echo "No SUPABASE_ACCESS_TOKEN secret set — skipping the status check."
+            echo "::notice::keep-alive: SUPABASE_ACCESS_TOKEN not set — status check skipped."
             echo "To enable it: create a token at https://supabase.com/dashboard/account/tokens"
             echo "and add it under Settings > Secrets and variables > Actions as SUPABASE_ACCESS_TOKEN."
             exit 0
@@ -49,12 +49,13 @@ jobs:
             -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
             | jq -r --arg ref "$PROJECT_REF" '.[] | select(.id==$ref) | .status')
           if [ -z "$status" ]; then
-            echo "::warning::Project $PROJECT_REF not found for this token."
-            echo "Project status: not found (check the token's organization)."
+            echo "::warning::keep-alive: project $PROJECT_REF not found for this token (check the token's organization)."
             exit 0
           fi
           echo "Project status: $status"
           echo "**Supabase project status:** \`$status\`" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$status" != "ACTIVE_HEALTHY" ]; then
-            echo "::warning::Project is not ACTIVE_HEALTHY (status=$status) — check the Supabase dashboard."
+          if [ "$status" = "ACTIVE_HEALTHY" ]; then
+            echo "::notice::keep-alive: Supabase project status is $status."
+          else
+            echo "::warning::keep-alive: Supabase project status is $status (not ACTIVE_HEALTHY) — check the dashboard."
           fi
