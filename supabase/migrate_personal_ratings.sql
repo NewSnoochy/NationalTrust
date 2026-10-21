@@ -23,6 +23,10 @@ create policy "signed-in users set their own rating" on public.ratings
 drop policy if exists "signed-in users change their own rating" on public.ratings;
 create policy "signed-in users change their own rating" on public.ratings
   for update to authenticated using (rated_by = auth.jwt() ->> 'email') with check (rated_by = auth.jwt() ->> 'email');
+-- Data API privileges (needed for tables created from 30 Oct 2026; not granted
+-- to anon, so scores stay private to signed-in users).
+grant select, insert, update on public.ratings to authenticated;
+grant all on public.ratings to service_role;
 
 insert into public.ratings (place_id, rated_by, rating, updated_at)
 select v.place_id, v.updated_by, v.rating, v.updated_at

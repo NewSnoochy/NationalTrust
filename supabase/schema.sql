@@ -24,6 +24,13 @@ alter table public.places enable row level security;
 drop policy if exists "signed-in users read places" on public.places;
 create policy "signed-in users read places" on public.places
   for select to authenticated using (true);
+-- Data API privileges. From 30 Oct 2026 Supabase stopped granting these to new
+-- tables automatically, so they are set explicitly (harmless to re-run on an
+-- older project that already has them). anon is deliberately NOT granted, so
+-- the API returns nothing until someone signs in. service_role is the sync
+-- script's secret key, which loads the place list.
+grant select on public.places to authenticated;
+grant all on public.places to service_role;
 
 -- Visited / notes, SHARED by everyone who can sign in (sign-up is
 -- switched off, so that is only the accounts made in the dashboard).
@@ -41,6 +48,8 @@ alter table public.shared_visits enable row level security;
 drop policy if exists "signed-in users share visits" on public.shared_visits;
 create policy "signed-in users share visits" on public.shared_visits
   for all to authenticated using (true) with check (true);
+grant select, insert, update, delete on public.shared_visits to authenticated;
+grant all on public.shared_visits to service_role;
 
 -- Each person's own 0-10 score; the map shows them all and their average.
 -- Everyone can read every score, but can only set their own. Clearing a score
@@ -62,6 +71,8 @@ create policy "signed-in users set their own rating" on public.ratings
 drop policy if exists "signed-in users change their own rating" on public.ratings;
 create policy "signed-in users change their own rating" on public.ratings
   for update to authenticated using (rated_by = auth.jwt() ->> 'email') with check (rated_by = auth.jwt() ->> 'email');
+grant select, insert, update on public.ratings to authenticated;
+grant all on public.ratings to service_role;
 
 -- Live updates: send changes to open maps straight away.
 do $$ begin
